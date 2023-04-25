@@ -2,29 +2,31 @@ import os
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
-import pennylane as qml
 
+def ddp_setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    init_process_group(backend="gloo", rank=rank, world_size=world_size)
 
-def ddp_setup():
-    init_process_group(backend="gloo")
-
+def ddp_exit():
+    destroy_process_group()
 
 class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        train_data: Dataset,
+        train_data: DataLoader,
         optimizer: torch.optim.Optimizer,
         criterion: nn.modules.loss._Loss,
+        id: int,
         save_every: int,
         snapshot_path: str = "snapshots/ckpt.pt",
     ) -> None:
-        self.id = int(os.environ["LOCAL_RANK"])
+        self.id = id
         self.model = model
         self.train_data = train_data
         self.optimizer = optimizer
@@ -50,29 +52,19 @@ class Trainer:
         self.optimizer.zero_grad()
         output = self.model(source)
         loss = self.criterion(output, target)
-        loss.backward(0)
+        loss.backward()
         self.optimizer.step()
     
     def _run_epoch(self, epoch):
         batch_size = len(next(iter(self.train_data))[0])
         print(f"[CPU {self.id}] Epoch: {epoch} | Batchsize: {batch_size} | Steps: {len(self.train_data)}")
-        self.train_data.samplet.set_epoch(epoch)
+        self.train_data.sampler.set_epoch(epoch)
         for source, targets in self.train_data:
             self._run_batch(source, targets)
-
-    def _save_snapshot(self, epoch):
-        snapshot = {
-            "MODEL_STATE_DICT": self.model.module.state_dict(),
-            "EPOCHS_RUN": epoch,
-        }
-        torch.save(snapshot, self.snapshot_path)
-        print(f"Epoch {epoch} | Training snapshot saved at {self.snapshot_path}")
 
     def train(self, epochs: int):
         for epoch in range(self.epochs_run, epochs):
             self._run_epoch(epoch)
-            if self.id == 0 and epoch % self.save_every == 0:
-                self._save_snapshot(epoch)
 
 
 def prepare_dataloader(dataset: Dataset, batch_size: int):
