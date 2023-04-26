@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+import torch.distributed as dist
 
 
 def ddp_setup(rank, world_size):
@@ -23,10 +24,12 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         criterion: nn.modules.loss._Loss,
         id: int,
+        world_size: int,
         save_every: int,
         snapshot_path: str = "snapshots/ckpt.pt",
     ) -> None:
         self.id = id
+        self.world_size = world_size
         self.model = model
         self.train_data = train_data
         self.optimizer = optimizer
@@ -34,6 +37,7 @@ class Trainer:
         self.save_every = save_every
         self.epochs_run = 0
         self.snapshot_path = snapshot_path
+
         if os.path.exists(snapshot_path):
             print("Loading snapshot")
             self._load_snapshot(snapshot_path)
@@ -54,13 +58,25 @@ class Trainer:
         loss = self.criterion(output, target)
         loss.backward()
         self.optimizer.step()
+        return loss.item()
     
     def _run_epoch(self, epoch):
         batch_size = len(next(iter(self.train_data))[0])
-        print(f"[CPU {self.id}] Epoch: {epoch} | Batchsize: {batch_size} | Steps: {len(self.train_data)}")
+        n_batches = len(self.train_data)
+
         self.train_data.sampler.set_epoch(epoch)
+        loss_epoch = 0.0
         for source, targets in self.train_data:
-            self._run_batch(source, targets)
+            loss_epoch += self._run_batch(source, targets)
+        loss_epoch = torch.tensor(loss_epoch / n_batches, dtype=float)
+        print(f"[CPU {self.id}] epoch: {epoch} | batchsize: {batch_size} | n_batches: {n_batches} | loss: {loss_epoch.item()}")
+
+        # all_reduce testing
+        dist.all_reduce(loss_epoch, op=dist.ReduceOp.SUM)
+        loss_total = loss_epoch.item() / self.world_size
+        if (self.id == 0):
+            print(f"[CPU {self.id}] total_loss: {loss_total}\n")
+
 
     def train(self, epochs: int):
         for epoch in range(self.epochs_run, epochs):

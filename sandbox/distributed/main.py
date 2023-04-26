@@ -2,21 +2,23 @@ from ddp_trainer import *
 import torch.multiprocessing as mp
 from torch.utils.data import Dataset, TensorDataset
 from torch import nn
-from fashion import training_data, test_data, NeuralNetwork
+from utils_quantum import *
 
 def main(rank, world_size):
     ddp_setup(rank, world_size)
 
-    training_loader = prepare_dataloader(training_data, batch_size=64)
+    net = EncNet()
+    training_loader = prepare_dataloader(get_dataset(), batch_size=10)
     
     trainer = Trainer(model=net,
-                      train_data=dl,
+                      train_data=training_loader,
                       optimizer=torch.optim.Adam(net.parameters(), lr=0.01),
                       criterion=nn.MSELoss(),
                       save_every=10,
-                      id=rank)
+                      id=rank,
+                      world_size=world_size,)
     
-    trainer.train(epochs=100)
+    trainer.train(epochs=10)
 
     ddp_exit()
 
