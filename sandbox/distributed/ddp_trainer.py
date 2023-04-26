@@ -26,7 +26,6 @@ class Trainer:
         id: int,
         world_size: int,
         save_every: int,
-        snapshot_path: str = "snapshots/ckpt.pt",
     ) -> None:
         self.id = id
         self.world_size = world_size
@@ -36,21 +35,28 @@ class Trainer:
         self.criterion = criterion
         self.save_every = save_every
         self.epochs_run = 0
-        self.snapshot_path = snapshot_path
 
-        if os.path.exists(snapshot_path):
-            print("Loading snapshot")
-            self._load_snapshot(snapshot_path)
-        
         self.model = DDP(self.model, device_ids=None)
         
     def _load_snapshot(self, snapshot_path):
         loc = "cpu"
         snapshot = torch.load(snapshot_path, map_location=loc)
-        self.model.load_state_dict(snapshot["MODEL_STATE_DICT"])
+        self.model.load_state_dict(snapshot["MODEL_STATE"])
         self.epochs_run = snapshot["EPOCHS_RUN"]
 
         print(f"Resuming training from snapshot at Epoch {self.epochs_run}")
+
+    def _save_snapshot(self, epoch, snapshot_path="snapshots/"):
+        os.makedirs(snapshot_path, exist_ok=True)
+        if self.id == 0:
+            snapshot = {
+                "MODEL_STATE": self.model.module.state_dict(),
+                "EPOCHS_RUN": epoch,
+            }
+            PATH = os.path.join(snapshot_path, "ckpt.pt")
+            torch.save(snapshot, PATH)
+            print(f"[CPU {self.id}] epoch {epoch} | Saved snapshot at {PATH}")
+
 
     def _run_batch(self, source, target):
         self.optimizer.zero_grad()
@@ -66,16 +72,23 @@ class Trainer:
 
         self.train_data.sampler.set_epoch(epoch)
         loss_epoch = 0.0
-        for source, targets in self.train_data:
+        for i, data in enumerate(self.train_data):
+            source, targets = data
             loss_epoch += self._run_batch(source, targets)
+            if self.id == 0:
+                print(f"[CPU {self.id}] epoch: {epoch} | processed batch {i} | batchsize: {batch_size}")
         loss_epoch = torch.tensor(loss_epoch / n_batches, dtype=float)
-        print(f"[CPU {self.id}] epoch: {epoch} | batchsize: {batch_size} | n_batches: {n_batches} | loss: {loss_epoch.item()}")
+        #print(f"[CPU {self.id}] epoch: {epoch} | batchsize: {batch_size}")
+        # print(f"[CPU {self.id}] epoch: {epoch} | batchsize: {batch_size} | n_batches: {n_batches} | loss: {loss_epoch.item()}")
 
-        # all_reduce testing
+        # get total loss via all_reduce
         dist.all_reduce(loss_epoch, op=dist.ReduceOp.SUM)
         loss_total = loss_epoch.item() / self.world_size
         if (self.id == 0):
-            print(f"[CPU {self.id}] total_loss: {loss_total}\n")
+            print(f"[CPU {self.id}] total_loss: {loss_total}")
+        
+        if epoch != 0 and epoch % self.save_every == 0:
+            self._save_snapshot(epoch=epoch)
 
 
     def train(self, epochs: int):

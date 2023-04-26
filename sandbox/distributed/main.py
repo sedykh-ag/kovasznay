@@ -4,6 +4,9 @@ from torch.utils.data import Dataset, TensorDataset
 from torch import nn
 from utils_quantum import *
 
+torch.manual_seed(0)
+np.random.seed(0)
+
 def main(rank, world_size):
     ddp_setup(rank, world_size)
 
@@ -14,7 +17,7 @@ def main(rank, world_size):
                       train_data=training_loader,
                       optimizer=torch.optim.Adam(net.parameters(), lr=0.01),
                       criterion=nn.MSELoss(),
-                      save_every=10,
+                      save_every=2,
                       id=rank,
                       world_size=world_size,)
     

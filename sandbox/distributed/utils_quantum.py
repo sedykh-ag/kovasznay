@@ -4,10 +4,7 @@ import numpy as np
 from torch.utils.data import TensorDataset
 from torch import nn
 
-def get_circuit():
-    n_qubits = 4
-    n_depth = 4
-    n_layers = 1
+def get_circuit(n_qubits=4, n_depth=4, n_layers=1):
     in_dim = n_qubits * n_depth
     out_dim = n_qubits
     dev = qml.device("lightning.qubit", wires=n_qubits)
@@ -27,6 +24,10 @@ def get_circuit():
     weight_shapes = {"w": (n_depth+1, n_layers, n_qubits, 3)}
 
     return circuit, weight_shapes, in_dim, out_dim
+
+def draw_circuit(circuit, weight_shapes):
+    in_dim = weight_shapes["w"][2] * (weight_shapes["w"][0] - 1)
+    qml.draw_mpl(circuit, decimals=2, expansion_strategy='device')(inputs=torch.ones(in_dim), w=torch.rand(weight_shapes["w"]))
 
 class EncNet(nn.Module):
     def __init__(self):
